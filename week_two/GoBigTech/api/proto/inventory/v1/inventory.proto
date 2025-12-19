@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package inventory.v1;
+option go_package = "github.com/bulbahal/GoBigTech/services/inventory/v1;inventorypb";
+
+message GetStockRequest { string product_id = 1; }
+message GetStockResponse { string product_id = 1; int32 available = 2; }
+message ReserveStockRequest { string product_id = 1; int32 quantity = 2; }
+message ReserveStockResponse { bool success = 1; }
+
+service InventoryService {
+  rpc GetStock (GetStockRequest) returns (GetStockResponse);
+  rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse);
+}
