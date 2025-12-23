@@ -1,6 +1,0 @@
-package: orderapi
-generate:
-  models: true
-  chi-server: true
-  strict-server: false
-output: services/order/api/openapi_gen.go
