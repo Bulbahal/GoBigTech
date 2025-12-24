@@ -11,6 +11,7 @@ import (
 	orderapi "github.com/bulbahal/GoBigTech/services/order/api"
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 
+	"github.com/bulbahal/GoBigTech/services/order/internal/config"
 	"github.com/bulbahal/GoBigTech/services/order/internal/repository"
 	"github.com/bulbahal/GoBigTech/services/order/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,20 +47,21 @@ func (p *PaymentClientAdapter) ProcessPayment(ctx context.Context, orderID, user
 
 func main() {
 	ctx := context.Background()
+	cfg := config.Load()
 
-	pool, err := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/appdb?sslmode=disable")
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pool.Close()
 
-	connInv, err := grpc.Dial("127.0.0.1:50051", grpc.WithInsecure())
+	connInv, err := grpc.Dial(cfg.InventoryAddr, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("failed to connect inventory: %v", err)
 	}
 	defer connInv.Close()
 
-	connPay, err := grpc.Dial("127.0.0.1:50052", grpc.WithInsecure())
+	connPay, err := grpc.Dial(cfg.PaymentAddr, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("failed to connect payment: %v", err)
 	}
@@ -82,6 +84,7 @@ func main() {
 	r := chi.NewRouter()
 	orderapi.HandlerFromMux(h, r)
 
-	log.Println("order listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	addr := ":" + cfg.HttpPort
+	log.Printf("order listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, r))
 }

@@ -43,24 +43,25 @@ func (s *server) ReserveStock(ctx context.Context, req *inventorypb.ReserveStock
 
 func main() {
 	ctx := context.Background()
+	config := LoadConfig()
 
-	mongoClient, err := repository.ConnectMongo(ctx, "mongodb://localhost:27017")
+	mongoClient, err := repository.ConnectMongo(ctx, config.MongoURI)
 	if err != nil {
 		log.Fatalf("mongo connect error: %v", err)
 	}
 	defer mongoClient.Disconnect(ctx)
 
-	repo := repository.NewMongoInventoryRepository(mongoClient, "appdb")
+	repo := repository.NewMongoInventoryRepository(mongoClient, config.MongoDB)
 	_ = repo.SetStock(ctx, "p1", 10)
 	_ = repo.SetStock(ctx, "p2", 10)
 
-	l, err := net.Listen("tcp", "127.0.0.1:50051")
+	l, err := net.Listen("tcp", config.GRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	g := grpc.NewServer()
 	inventorypb.RegisterInventoryServiceServer(g, &server{repo: repo})
 
-	log.Println("inventory listening on 127.0.0.1:50051")
+	log.Printf("inventory listening on %s", config.GRPCAddr)
 	log.Fatal(g.Serve(l))
 }

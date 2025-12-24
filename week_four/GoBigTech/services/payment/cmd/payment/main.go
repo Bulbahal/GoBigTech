@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"log"
-	"net"
-
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 	"google.golang.org/grpc"
+	"log"
+	"net"
 )
 
 type server struct {
@@ -18,12 +17,15 @@ func (s *server) ProcessPayment(ctx context.Context, req *paymentpb.ProcessPayme
 }
 
 func main() {
-	l, err := net.Listen("tcp4", "127.0.0.1:50052")
+	cfg := LoadConfig()
+
+	l, err := net.Listen("tcp4", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to listen: %v", err)
 	}
-	g := grpc.NewServer()
-	paymentpb.RegisterPaymentServiceServer(g, &server{})
-	log.Println("payment listening on 127.0.0.1:50052")
-	log.Fatal(g.Serve(l))
+	grpcServer := grpc.NewServer()
+	paymentpb.RegisterPaymentServiceServer(grpcServer, &server{})
+
+	log.Printf("Listening on %s", cfg.GRPCAddr)
+	log.Fatal(grpcServer.Serve(l))
 }
