@@ -92,11 +92,11 @@ func TestCreateOrder_Success(t *testing.T) {
 	if !repoMock.saveCalled {
 		t.Errorf("expected repo.SaveOrder to be called")
 	}
-	if repoMock.savedOrder.ID != "order-124" {
+	if repoMock.savedOrder.ID != "" {
 		t.Errorf("saved order ID is wrong: %v", repoMock.savedOrder.ID)
 	}
 
-	if order.ID != "order-124" {
+	if order.ID != "" {
 		t.Errorf("order ID is wrong: %v", order.ID)
 	}
 	if order.UserID != "u1" {

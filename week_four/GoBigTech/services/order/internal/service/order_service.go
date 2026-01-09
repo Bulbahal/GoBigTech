@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 )
 
 type Order struct {
@@ -62,7 +63,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID string, items []O
 	}
 
 	order := Order{
-		ID:     "order-124",
+		ID:     uuid.New().String(),
 		UserID: userID,
 		Status: "paid",
 		Items:  items,
