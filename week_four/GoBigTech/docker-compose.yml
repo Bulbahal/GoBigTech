@@ -29,6 +29,31 @@ services:
       timeout: 5s
       retries: 20
 
+  inventory:
+    build:
+      context: ./services
+      dockerfile: inventory/Dockerfile
+    restart: unless-stopped
+    environment:
+      GRPC_ADDR: 0.0.0.0:50051
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: appdb
+    ports:
+      - "50051:50051"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  payment:
+    build:
+      context: ./services
+      dockerfile: payment/Dockerfile
+    restart: unless-stopped
+    environment:
+      GRPC_ADDR: 0.0.0.0:50052
+    ports:
+      - "50052:50052"
+
   order:
     build:
       context: ./services
@@ -37,13 +62,17 @@ services:
     environment:
       HTTP_PORT: "8080"
       POSTGRES_DSN: postgres://postgres:postgres@db:5432/appdb?sslmode=disable
-      INVENTORY_GRPC_ADDR: host.docker.internal:50051
-      PAYMENT_GRPC_ADDR: host.docker.internal:50052
+      INVENTORY_GRPC_ADDR: inventory:50051
+      PAYMENT_GRPC_ADDR: payment:50052
     ports:
       - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
+      inventory:
+        condition: service_started
+      payment:
+        condition: service_started
 
 volumes:
   db-data:
