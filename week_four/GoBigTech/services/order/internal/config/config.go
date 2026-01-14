@@ -4,6 +4,7 @@ import "os"
 
 type Config struct {
 	HttpPort string
+	Env      string
 
 	PostgresDSN   string
 	InventoryAddr string
@@ -19,6 +20,7 @@ func getEnv(key, fallback string) string {
 
 func Load() Config {
 	return Config{
+		Env:           getEnv("ENV", "local"),
 		HttpPort:      getEnv("HTTP_PORT", "8080"),
 		PostgresDSN:   getEnv("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/appdb?sslmode=disable"),
 		InventoryAddr: getEnv("INVENTORY_GRPC_ADDR", "localhost:50051"),

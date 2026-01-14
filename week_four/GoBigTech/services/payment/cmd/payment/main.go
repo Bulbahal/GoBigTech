@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	platformhealth "github.com/bulbahal/GoBigTech/platform/health"
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 	"google.golang.org/grpc"
 	"log"
@@ -19,13 +20,16 @@ func (s *server) ProcessPayment(ctx context.Context, req *paymentpb.ProcessPayme
 func main() {
 	cfg := LoadConfig()
 
-	l, err := net.Listen("tcp4", cfg.GRPCAddr)
+	l, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
+
 	grpcServer := grpc.NewServer()
 	paymentpb.RegisterPaymentServiceServer(grpcServer, &server{})
 
-	log.Printf("Listening on %s", cfg.GRPCAddr)
+	platformhealth.RegisterGRPC(grpcServer)
+
+	log.Printf("payment listening on %s", cfg.GRPCAddr)
 	log.Fatal(grpcServer.Serve(l))
 }

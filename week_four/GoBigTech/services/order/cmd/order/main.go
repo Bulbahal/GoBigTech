@@ -2,21 +2,24 @@ package main
 
 import (
 	"context"
-	"github.com/go-chi/chi/v5"
-	"google.golang.org/grpc"
-	"log"
+	"google.golang.org/grpc/credentials/insecure"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	inventorypb "github.com/bulbahal/GoBigTech/services/inventory/v1"
 	orderapi "github.com/bulbahal/GoBigTech/services/order/api"
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 
+	platformlogger "github.com/bulbahal/GoBigTech/platform/logger"
 	"github.com/bulbahal/GoBigTech/services/order/internal/config"
 	"github.com/bulbahal/GoBigTech/services/order/internal/repository"
 	"github.com/bulbahal/GoBigTech/services/order/internal/service"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	orderhttp "github.com/bulbahal/GoBigTech/services/order/internal/transport/http"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type InventoryClientAdapter struct {
@@ -49,42 +52,45 @@ func main() {
 	ctx := context.Background()
 	cfg := config.Load()
 
+	log := platformlogger.New(cfg.Env)
+	defer func() { _ = log.Sync() }()
+
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("pgxpool new", zap.Error(err))
 	}
 	defer pool.Close()
 
-	connInv, err := grpc.Dial(cfg.InventoryAddr, grpc.WithInsecure())
+	connInv, err := grpc.Dial(cfg.InventoryAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
-		log.Fatalf("failed to connect inventory: %v", err)
+		log.Fatal("connect inventory", zap.Error(err))
 	}
 	defer connInv.Close()
 
-	connPay, err := grpc.Dial(cfg.PaymentAddr, grpc.WithInsecure())
+	connPay, err := grpc.Dial(cfg.PaymentAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
-		log.Fatalf("failed to connect payment: %v", err)
+		log.Fatal("connect payment", zap.Error(err))
 	}
 	defer connPay.Close()
 
-	invNative := inventorypb.NewInventoryServiceClient(connInv)
-	payNative := paymentpb.NewPaymentServiceClient(connPay)
-
-	invClient := &InventoryClientAdapter{client: invNative}
-	payClient := &PaymentClientAdapter{client: payNative}
+	invClient := &InventoryClientAdapter{client: inventorypb.NewInventoryServiceClient(connInv)}
+	payClient := &PaymentClientAdapter{client: paymentpb.NewPaymentServiceClient(connPay)}
 
 	repo := repository.NewPostgresRepository(pool)
-
 	svc := service.NewOrderService(invClient, payClient, repo)
 
-	h := &orderhttp.Handler{
-		Service: svc,
-	}
-
+	h := &orderhttp.Handler{Service: svc}
 	r := chi.NewRouter()
 	orderapi.HandlerFromMux(h, r)
 
 	addr := ":" + cfg.HttpPort
-	log.Printf("order listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, r))
+	log.Info("order listening", zap.String("addr", addr))
+
+	if err := http.ListenAndServe(addr, r); err != nil {
+		log.Fatal("http server error", zap.Error(err))
+	}
 }

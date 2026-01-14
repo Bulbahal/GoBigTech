@@ -4,4 +4,5 @@ use (
 	./services/inventory
 	./services/order
 	./services/payment
+	./platform
 )

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	platformhealth "github.com/bulbahal/GoBigTech/platform/health"
+	"github.com/bulbahal/GoBigTech/platform/shutdown"
 	"github.com/bulbahal/GoBigTech/services/inventory/internal/repository"
 	inventorypb "github.com/bulbahal/GoBigTech/services/inventory/v1"
 	"google.golang.org/grpc"
@@ -9,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"log"
 	"net"
+	"time"
 )
 
 type server struct {
@@ -45,11 +48,16 @@ func main() {
 	ctx := context.Background()
 	config := LoadConfig()
 
+	shutdownMgr := shutdown.New()
+
 	mongoClient, err := repository.ConnectMongo(ctx, config.MongoURI)
 	if err != nil {
 		log.Fatalf("mongo connect error: %v", err)
 	}
-	defer mongoClient.Disconnect(ctx)
+	shutdownMgr.Add(func(ctx context.Context) error {
+		log.Println("closing mongo")
+		return mongoClient.Disconnect(ctx)
+	})
 
 	repo := repository.NewMongoInventoryRepository(mongoClient, config.MongoDB)
 	_ = repo.SetStock(ctx, "p1", 10)
@@ -59,8 +67,34 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
+
+	shutdownMgr.Add(func(ctx context.Context) error {
+		log.Println("closing listener")
+		return l.Close()
+	})
+
 	g := grpc.NewServer()
 	inventorypb.RegisterInventoryServiceServer(g, &server{repo: repo})
+
+	shutdownMgr.Add(func(ctx context.Context) error {
+		log.Println("stopping grpc server")
+		g.GracefulStop()
+		return nil
+	})
+	go func() {
+		log.Printf("inventory grpc server listening on %s", config.GRPCAddr)
+		if err := g.Serve(l); err != nil {
+			log.Printf("grpc serve error: %v", err)
+		}
+	}()
+
+	sig := shutdown.WaitSignal()
+	log.Printf("shutdown signal received: %v", sig)
+	if err := shutdownMgr.Shutdown(10 * time.Second); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
+
+	platformhealth.RegisterGRPC(g)
 
 	log.Printf("inventory listening on %s", config.GRPCAddr)
 	log.Fatal(g.Serve(l))
