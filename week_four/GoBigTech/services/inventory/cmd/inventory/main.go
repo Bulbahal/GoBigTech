@@ -76,6 +76,8 @@ func main() {
 	g := grpc.NewServer()
 	inventorypb.RegisterInventoryServiceServer(g, &server{repo: repo})
 
+	platformhealth.RegisterGRPC(g)
+
 	shutdownMgr.Add(func(ctx context.Context) error {
 		log.Println("stopping grpc server")
 		g.GracefulStop()
@@ -90,12 +92,10 @@ func main() {
 
 	sig := shutdown.WaitSignal()
 	log.Printf("shutdown signal received: %v", sig)
+
 	if err := shutdownMgr.Shutdown(10 * time.Second); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
 
-	platformhealth.RegisterGRPC(g)
-
-	log.Printf("inventory listening on %s", config.GRPCAddr)
-	log.Fatal(g.Serve(l))
+	log.Println("inventory stopped gracefully")
 }
