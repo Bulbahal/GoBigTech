@@ -1,8 +1,9 @@
-package main
+package config
 
 import "os"
 
 type Config struct {
+	Env      string
 	GRPCAddr string
 }
 
@@ -13,8 +14,9 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func LoadConfig() Config {
+func Load() Config {
 	return Config{
+		Env:      getEnv("ENV", "dev"),
 		GRPCAddr: getEnv("GRPC_ADDR", "127.0.0.1:50052"),
 	}
 }

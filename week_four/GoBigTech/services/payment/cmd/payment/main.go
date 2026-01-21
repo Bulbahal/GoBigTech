@@ -2,59 +2,47 @@ package main
 
 import (
 	"context"
+	"time"
+
 	platformhealth "github.com/bulbahal/GoBigTech/platform/health"
 	"github.com/bulbahal/GoBigTech/platform/shutdown"
+	"github.com/bulbahal/GoBigTech/services/payment/internal/config"
+	"github.com/bulbahal/GoBigTech/services/payment/internal/di"
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
-	"google.golang.org/grpc"
-	"log"
-	"net"
-	"time"
+
+	"go.uber.org/zap"
 )
 
-type server struct {
-	paymentpb.UnimplementedPaymentServiceServer
-}
-
-func (s *server) ProcessPayment(ctx context.Context, req *paymentpb.ProcessPaymentRequest) (*paymentpb.ProcessPaymentResponse, error) {
-	return &paymentpb.ProcessPaymentResponse{Success: true, TransactionId: "tx_123"}, nil
-}
-
 func main() {
-	cfg := LoadConfig()
+	ctx := context.Background()
+	cfg := config.Load()
+
 	shutdownMgr := shutdown.New()
 
-	l, err := net.Listen("tcp", cfg.GRPCAddr)
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-	shutdownMgr.Add(func(ctx context.Context) error {
-		log.Println("closing listener")
-		return l.Close()
-	})
+	c := di.New(cfg)
+	log := c.Logger()
 
-	grpcServer := grpc.NewServer()
-	paymentpb.RegisterPaymentServiceServer(grpcServer, &server{})
-	platformhealth.RegisterGRPC(grpcServer)
+	l := c.Listener()
+	g := c.GRPCServer()
 
-	shutdownMgr.Add(func(ctx context.Context) error {
-		log.Println("stopping grpc server")
-		grpcServer.GracefulStop()
-		return nil
-	})
+	paymentpb.RegisterPaymentServiceServer(g, c.Handler(ctx))
+	platformhealth.RegisterGRPC(g)
+
+	shutdownMgr.Add(c.Close)
 
 	go func() {
-		log.Printf("payment grpc server listening on %s", cfg.GRPCAddr)
-		if err := grpcServer.Serve(l); err != nil {
-			log.Printf("grpc serve error: %v", err)
+		log.Info("payment grpc server listening", zap.String("address", cfg.GRPCAddr))
+		if err := g.Serve(l); err != nil {
+			log.Error("grpc serve error", zap.Error(err))
 		}
 	}()
 
 	sig := shutdown.WaitSignal()
-	log.Printf("shutdown signal received: %v", sig)
+	log.Info("shutdown signal received", zap.String("signal", sig.String()))
 
 	if err := shutdownMgr.Shutdown(10 * time.Second); err != nil {
-		log.Printf("shutdown error: %v", err)
+		log.Error("shutdown error", zap.Error(err))
 	}
 
-	log.Println("payment stopped gracefully")
+	log.Info("payment stopped gracefully")
 }

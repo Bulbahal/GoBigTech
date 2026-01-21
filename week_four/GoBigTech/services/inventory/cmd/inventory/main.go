@@ -2,100 +2,51 @@ package main
 
 import (
 	"context"
+	"time"
+
 	platformhealth "github.com/bulbahal/GoBigTech/platform/health"
 	"github.com/bulbahal/GoBigTech/platform/shutdown"
-	"github.com/bulbahal/GoBigTech/services/inventory/internal/repository"
+	"github.com/bulbahal/GoBigTech/services/inventory/internal/config"
+	"github.com/bulbahal/GoBigTech/services/inventory/internal/di"
 	inventorypb "github.com/bulbahal/GoBigTech/services/inventory/v1"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"log"
-	"net"
-	"time"
+
+	"go.uber.org/zap"
 )
-
-type server struct {
-	inventorypb.UnimplementedInventoryServiceServer
-	repo *repository.MongoInventoryRepository
-}
-
-func (s *server) GetStock(ctx context.Context, req *inventorypb.GetStockRequest) (*inventorypb.GetStockResponse, error) {
-	qty, err := s.repo.Get(ctx, req.GetProductId())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "mongo get: %v", err)
-	}
-	return &inventorypb.GetStockResponse{
-		ProductId: req.GetProductId(),
-		Available: qty,
-	}, nil
-}
-func (s *server) ReserveStock(ctx context.Context, req *inventorypb.ReserveStockRequest) (*inventorypb.ReserveStockResponse, error) {
-	if req.GetQuantity() <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "quantity must be greater than 0")
-	}
-
-	err := s.repo.Reserve(ctx, req.GetProductId(), req.GetQuantity())
-	if err != nil {
-		if err == repository.ErrNotEnoughStock {
-			return nil, status.Error(codes.FailedPrecondition, "not enough stock")
-		}
-		return nil, status.Errorf(codes.Internal, "mongo reserve: %v", err)
-	}
-	return &inventorypb.ReserveStockResponse{Success: true}, nil
-}
 
 func main() {
 	ctx := context.Background()
-	config := LoadConfig()
+	cfg := config.Load()
 
 	shutdownMgr := shutdown.New()
 
-	mongoClient, err := repository.ConnectMongo(ctx, config.MongoURI)
-	if err != nil {
-		log.Fatalf("mongo connect error: %v", err)
-	}
-	shutdownMgr.Add(func(ctx context.Context) error {
-		log.Println("closing mongo")
-		return mongoClient.Disconnect(ctx)
-	})
+	c := di.New(cfg)
+	log := c.Logger()
 
-	repo := repository.NewMongoInventoryRepository(mongoClient, config.MongoDB)
+	repo := c.Repository(ctx)
 	_ = repo.SetStock(ctx, "p1", 10)
 	_ = repo.SetStock(ctx, "p2", 10)
 
-	l, err := net.Listen("tcp", config.GRPCAddr)
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
+	l := c.GRPCListener()
+	g := c.GRPCServer()
 
-	shutdownMgr.Add(func(ctx context.Context) error {
-		log.Println("closing listener")
-		return l.Close()
-	})
-
-	g := grpc.NewServer()
-	inventorypb.RegisterInventoryServiceServer(g, &server{repo: repo})
-
+	inventorypb.RegisterInventoryServiceServer(g, c.Handler(ctx))
 	platformhealth.RegisterGRPC(g)
 
-	shutdownMgr.Add(func(ctx context.Context) error {
-		log.Println("stopping grpc server")
-		g.GracefulStop()
-		return nil
-	})
+	shutdownMgr.Add(c.Close)
+
 	go func() {
-		log.Printf("inventory grpc server listening on %s", config.GRPCAddr)
+		log.Info("inventory grpc server listening", zap.String("address", cfg.GRPCAddr))
 		if err := g.Serve(l); err != nil {
-			log.Printf("grpc serve error: %v", err)
+			log.Error("grpc serve error", zap.Error(err))
 		}
 	}()
 
 	sig := shutdown.WaitSignal()
-	log.Printf("shutdown signal received: %v", sig)
+	log.Info("shutdown signal received", zap.String("signal", sig.String()))
 
 	if err := shutdownMgr.Shutdown(10 * time.Second); err != nil {
-		log.Printf("shutdown error: %v", err)
+		log.Error("shutdown error", zap.Error(err))
 	}
 
-	log.Println("inventory stopped gracefully")
+	log.Info("inventory stopped gracefully")
 }

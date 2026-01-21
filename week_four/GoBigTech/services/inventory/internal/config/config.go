@@ -1,8 +1,9 @@
-package main
+package config
 
 import "os"
 
 type Config struct {
+	Env      string
 	GRPCAddr string
 	MongoURI string
 	MongoDB  string
@@ -15,8 +16,9 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func LoadConfig() Config {
+func Load() Config {
 	return Config{
+		Env:      getEnv("ENV", "dev"),
 		GRPCAddr: getEnv("GRPC_ADDR", "127.0.0.1:50051"),
 		MongoURI: getEnv("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDB:  getEnv("MONGO_DB", "appdb"),
