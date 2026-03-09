@@ -3,7 +3,9 @@ package di
 import (
 	"context"
 
+	platformkafka "github.com/bulbahal/GoBigTech/platform/kafka"
 	platformlogger "github.com/bulbahal/GoBigTech/platform/logger"
+	platformevents "github.com/bulbahal/GoBigTech/platform/events"
 	"github.com/bulbahal/GoBigTech/services/order/internal/config"
 	"github.com/bulbahal/GoBigTech/services/order/internal/repository"
 	"github.com/bulbahal/GoBigTech/services/order/internal/service"
@@ -15,12 +17,15 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"strings"
 )
 
 type Container struct {
 	cfg *config.Config
 
-	log  *zap.Logger
+	log *zap.Logger
+
 	pool *pgxpool.Pool
 
 	invConn *grpc.ClientConn
@@ -31,6 +36,9 @@ type Container struct {
 
 	repo service.OrderRepository
 	svc  service.OrderService
+
+	kafkaProducer  *platformkafka.Producer
+	kafkaConsumer  *platformkafka.Consumer
 }
 
 func New(cfg config.Config) *Container {
@@ -132,12 +140,34 @@ func (c *Container) OrderRepository(ctx context.Context) service.OrderRepository
 	return c.repo
 }
 
+func (c *Container) KafkaProducer() *platformkafka.Producer {
+	if c.kafkaProducer == nil {
+		brokers := strings.Split(c.cfg.KafkaBrokers, ",")
+		c.kafkaProducer = platformkafka.NewProducer(brokers, c.Logger())
+	}
+	return c.kafkaProducer
+}
+
+func (c *Container) KafkaConsumerAssembly() *platformkafka.Consumer {
+	if c.kafkaConsumer == nil {
+		brokers := strings.Split(c.cfg.KafkaBrokers, ",")
+		c.kafkaConsumer = platformkafka.NewConsumer(
+			brokers,
+			"order-assembly",
+			[]string{platformevents.TopicOrderAssemblyCompleted},
+			c.Logger(),
+		)
+	}
+	return c.kafkaConsumer
+}
+
 func (c *Container) OrderService(ctx context.Context) service.OrderService {
 	if c.svc == nil {
 		c.svc = service.NewOrderService(
 			c.InventoryClient(),
 			c.PaymentClient(),
 			c.OrderRepository(ctx),
+			c.KafkaProducer(),
 		)
 	}
 	return c.svc
@@ -152,6 +182,12 @@ func (c *Container) Close(ctx context.Context) error {
 	}
 	if c.pool != nil {
 		c.pool.Close()
+	}
+	if c.kafkaProducer != nil {
+		_ = c.kafkaProducer.Close()
+	}
+	if c.kafkaConsumer != nil {
+		_ = c.kafkaConsumer.Close()
 	}
 	if c.log != nil {
 		_ = c.log.Sync()

@@ -71,9 +71,24 @@ func (r *PostgresRepository) GetOrderByID(ctx context.Context, id string) (servi
 		return service.Order{}, err
 	}
 
+	return r.loadOrderItems(ctx, &order)
+}
+
+func (r *PostgresRepository) UpdateOrderStatus(ctx context.Context, orderID, status string) error {
+	res, err := r.pool.Exec(ctx, `UPDATE orders SET status = $1 WHERE id = $2`, status, orderID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("order not found")
+	}
+	return nil
+}
+
+func (r *PostgresRepository) loadOrderItems(ctx context.Context, order *service.Order) (service.Order, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
-		id,
+		order.ID,
 	)
 	if err != nil {
 		return service.Order{}, err
@@ -92,5 +107,5 @@ func (r *PostgresRepository) GetOrderByID(ctx context.Context, id string) (servi
 		return service.Order{}, err
 	}
 
-	return order, nil
+	return *order, nil
 }

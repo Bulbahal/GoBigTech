@@ -35,6 +35,10 @@ func (m *mockRepo) GetOrderByID(ctx context.Context, id string) (Order, error) {
 	return m.getOrder, nil
 }
 
+func (m *mockRepo) UpdateOrderStatus(ctx context.Context, orderID, status string) error {
+	return nil
+}
+
 func (m *mockInventoryClient) ReserveStock(ctx context.Context, productID string, qty int32) error {
 	m.called = true
 	m.calledProdID = productID

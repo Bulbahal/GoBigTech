@@ -9,6 +9,8 @@ type Config struct {
 	PostgresDSN   string
 	InventoryAddr string
 	PaymentAddr   string
+
+	KafkaBrokers string
 }
 
 func getEnv(key, fallback string) string {
@@ -25,5 +27,6 @@ func Load() Config {
 		PostgresDSN:   getEnv("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/appdb?sslmode=disable"),
 		InventoryAddr: getEnv("INVENTORY_GRPC_ADDR", "localhost:50051"),
 		PaymentAddr:   getEnv("PAYMENT_GRPC_ADDR", "localhost:50052"),
+		KafkaBrokers:  getEnv("KAFKA_BROKERS", "kafka:9092"),
 	}
 }
