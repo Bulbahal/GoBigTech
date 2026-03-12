@@ -12,6 +12,9 @@ type Config struct {
 	// TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID задаются через env; без них отправка в Telegram не работает.
 	TelegramBotToken string
 	TelegramChatID   string
+
+	// IAMAddr — адрес gRPC IAM Service для получения контактов пользователя.
+	IAMAddr string
 }
 
 func getEnv(key, fallback string) string {
@@ -27,5 +30,6 @@ func Load() Config {
 		KafkaBrokers:     getEnv("KAFKA_BROKERS", "kafka:9092"),
 		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", "8792715861:AAEY23RWOU43ABfn0V_RHNP9FyQJLNfo1mg"),
 		TelegramChatID:   getEnv("TELEGRAM_CHAT_ID", "945576559"),
+		IAMAddr:          getEnv("IAM_GRPC_ADDR", "iam:50060"),
 	}
 }

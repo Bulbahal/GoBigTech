@@ -132,6 +132,38 @@ services:
       kafka:
         condition: service_started
 
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  iam:
+    build:
+      context: .
+      dockerfile: services/iam/Dockerfile
+    restart: unless-stopped
+    environment:
+      ENV: local
+      GRPC_ADDR: 0.0.0.0:50060
+      POSTGRES_DSN: postgres://postgres:postgres@db:5432/iamdb?sslmode=disable
+      REDIS_ADDR: redis:6379
+    ports:
+      - "50060:50060"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   db-data:
   mongo-data:
+  redis-data:

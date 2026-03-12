@@ -18,24 +18,24 @@ const (
 
 // Sender отправляет текстовые сообщения в Telegram через Bot API.
 type Sender interface {
-	SendMessage(ctx context.Context, text string) error
+	// SendMessage отправляет text в указанный chatID.
+	SendMessage(ctx context.Context, chatID, text string) error
 }
 
 // sender — реализация Sender через HTTP-вызовы sendMessage.
 type sender struct {
 	client    *http.Client
 	botToken  string
-	chatID    string
 	requestURL string
 }
 
 // NewSender создаёт отправителя сообщений в Telegram.
-// botToken и chatID берутся из конфига (env TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).
-func NewSender(botToken, chatID string) Sender {
+// botToken берётся из конфига (env TELEGRAM_BOT_TOKEN).
+// chatID теперь передаётся при каждом вызове SendMessage.
+func NewSender(botToken string) Sender {
 	return &sender{
 		client:    &http.Client{Timeout: requestTimeout},
 		botToken:  botToken,
-		chatID:    chatID,
 		requestURL: apiBase + "/bot" + botToken + "/sendMessage",
 	}
 }
@@ -48,12 +48,12 @@ type sendMessageRequest struct {
 
 // SendMessage отправляет текст в чат, заданный при создании Sender.
 // Уважает context: при отмене контекста запрос не выполняется или прерывается.
-func (s *sender) SendMessage(ctx context.Context, text string) error {
-	if s.botToken == "" || s.chatID == "" {
+func (s *sender) SendMessage(ctx context.Context, chatID, text string) error {
+	if s.botToken == "" || chatID == "" {
 		return fmt.Errorf("telegram: bot token or chat id not set")
 	}
 
-	body := sendMessageRequest{ChatID: s.chatID, Text: text}
+	body := sendMessageRequest{ChatID: chatID, Text: text}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("telegram: marshal request: %w", err)
