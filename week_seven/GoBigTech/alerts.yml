@@ -1,0 +1,11 @@
+groups:
+  - name: order-alerts
+    rules:
+      - alert: TooManyOrders
+        expr: increase(otel_orders_total[1m]) > 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Слишком много заказов"
+          description: "За последнюю минуту оформлено более 10 заказов"

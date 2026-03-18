@@ -1,0 +1,63 @@
+# OpenTelemetry Collector (contrib) — приём OTLP от приложений, трасс в Jaeger, метрик в Prometheus scrape.
+# Соответствует docker-compose: otel-collector + jaeger (all-in-one).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  # Чтение логов docker-контейнеров (json-file) с хоста.
+  # Для workbench-compose: в docker-compose у otel-collector смонтирован /var/lib/docker/containers:ro.
+  filelog:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    start_at: beginning
+    operators:
+      - type: json_parser
+        parse_from: body
+      - type: move
+        from: attributes.log
+        to: body
+
+processors:
+  batch: {}
+
+exporters:
+  # Отладочный вывод спанов в лог collector (не для продакшена под нагрузкой).
+  debug:
+    verbosity: normal
+
+  # Трассы в Jaeger all-in-one: внутри сети compose Jaeger слушает OTLP gRPC на 4317.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Экспозиция метрик в формате Prometheus на :8889 — Prometheus scrape-ит otel-collector:8889.
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: otel
+  # Логи в Elasticsearch, который поднят в docker-compose.
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    logs_index: otel-logs
+
+service:
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [elasticsearch]

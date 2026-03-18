@@ -6,6 +6,7 @@ import (
 
 	orderapi "github.com/bulbahal/GoBigTech/services/order/api"
 	"github.com/bulbahal/GoBigTech/services/order/internal/service"
+	"google.golang.org/grpc/metadata"
 )
 
 type Handler struct {
@@ -14,6 +15,12 @@ type Handler struct {
 
 func (h *Handler) PostOrders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Проталкиваем session id из HTTP-заголовка в контекст как исходящий gRPC metadata,
+	// чтобы вызов Inventory Service проходил IAM-аутентификацию.
+	if sessionID := r.Header.Get("x-session-id"); sessionID != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-session-id", sessionID)
+	}
 
 	var body orderapi.CreateOrder
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

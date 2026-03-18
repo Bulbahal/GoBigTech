@@ -14,6 +14,7 @@ import (
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -68,6 +69,7 @@ func (c *Container) inventoryConn() *grpc.ClientConn {
 		conn, err := grpc.Dial(
 			c.cfg.InventoryAddr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor()),
 		)
 		if err != nil {
 			c.Logger().Fatal("connect inventory", zap.Error(err))
@@ -82,6 +84,7 @@ func (c *Container) paymentConn() *grpc.ClientConn {
 		conn, err := grpc.Dial(
 			c.cfg.PaymentAddr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor()),
 		)
 		if err != nil {
 			c.Logger().Fatal("connect payment", zap.Error(err))

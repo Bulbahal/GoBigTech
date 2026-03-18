@@ -16,7 +16,16 @@ import (
 
 	orderapi "github.com/bulbahal/GoBigTech/services/order/api"
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -27,6 +36,45 @@ func main() {
 
 	log := platformlogger.New(cfg.Env)
 	defer func() { _ = log.Sync() }()
+
+	// Инициализация OpenTelemetry: OTLP gRPC в collector, resource service.name=order-service.
+	res, err := resource.New(ctx, resource.WithAttributes(attribute.String("service.name", "order-service")))
+	if err != nil {
+		log.Fatal("resource.New", zap.Error(err))
+	}
+	// Трейсинг.
+	traceExp, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint("otel-collector:4317"),
+		otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatal("otlptracegrpc.New", zap.Error(err))
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExp),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tp)
+	shutdownMgr.Add(func(ctx context.Context) error {
+		return tp.Shutdown(ctx)
+	})
+
+	// Метрики.
+	metricExp, err := otlpmetricgrpc.New(ctx,
+		otlpmetricgrpc.WithEndpoint("otel-collector:4317"),
+		otlpmetricgrpc.WithTLSCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatal("otlpmetricgrpc.New", zap.Error(err))
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(mp)
+	shutdownMgr.Add(func(ctx context.Context) error {
+		return mp.Shutdown(ctx)
+	})
 
 	c := di.New(cfg)
 	svc := c.OrderService(ctx)
@@ -53,9 +101,11 @@ func main() {
 	h := &orderhttp.Handler{Service: svc}
 	r := chi.NewRouter()
 	orderapi.HandlerFromMux(h, r)
+	// Минимальный HTTP-трейсинг: каждый входящий запрос создаёт span и уходит в Jaeger.
+	httpHandler := otelhttp.NewHandler(r, "order-http")
 
 	addr := ":" + cfg.HttpPort
-	srv := &http.Server{Addr: addr, Handler: r}
+	srv := &http.Server{Addr: addr, Handler: httpHandler}
 
 	shutdownMgr.Add(func(ctx context.Context) error {
 		log.Info("stopping http server", zap.String("addr", addr))

@@ -12,6 +12,7 @@ import (
 	inventorypb "github.com/bulbahal/GoBigTech/services/inventory/v1"
 
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -80,7 +81,10 @@ func (c *Container) GRPCListener() net.Listener {
 func (c *Container) GRPCServer() *grpc.Server {
 	if c.server == nil {
 		c.server = grpc.NewServer(
-			grpc.UnaryInterceptor(c.authInterceptor()),
+			grpc.ChainUnaryInterceptor(
+				otelgrpc.UnaryServerInterceptor(),
+				c.authInterceptor(),
+			),
 		)
 	}
 	return c.server

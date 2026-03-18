@@ -9,6 +9,7 @@ import (
 	transportgrpc "github.com/bulbahal/GoBigTech/services/payment/internal/transport/grpc"
 	paymentpb "github.com/bulbahal/GoBigTech/services/payment/v1"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -47,7 +48,9 @@ func (c *Container) Listener() net.Listener {
 
 func (c *Container) GRPCServer() *grpc.Server {
 	if c.server == nil {
-		c.server = grpc.NewServer()
+		c.server = grpc.NewServer(
+			grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
+		)
 	}
 	return c.server
 }

@@ -11,7 +11,13 @@ import (
 	"github.com/bulbahal/GoBigTech/services/assembly/internal/config"
 	"github.com/bulbahal/GoBigTech/services/assembly/internal/di"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -21,12 +27,38 @@ func main() {
 	c := di.New(cfg)
 	log := c.Logger()
 
+	// OTEL: метрики для сборки, отправляем в otel-collector по OTLP.
+	ctx := context.Background()
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			attribute.String("service.name", "assembly-service"),
+		),
+	)
+	if err != nil {
+		log.Fatal("resource.New", zap.Error(err))
+	}
+	metricExp, err := otlpmetricgrpc.New(ctx,
+		otlpmetricgrpc.WithEndpoint("otel-collector:4317"),
+		otlpmetricgrpc.WithTLSCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatal("otlpmetricgrpc.New", zap.Error(err))
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(mp)
+	shutdownMgr.Add(func(ctx context.Context) error {
+		return mp.Shutdown(ctx)
+	})
+
 	consumer := c.KafkaConsumer()
 	svc := c.AssemblyService()
 
 	shutdownMgr.Add(c.Close)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	go func() {

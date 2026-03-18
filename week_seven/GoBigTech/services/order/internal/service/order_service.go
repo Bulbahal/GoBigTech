@@ -8,6 +8,7 @@ import (
 
 	platformevents "github.com/bulbahal/GoBigTech/platform/events"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 type Order struct {
@@ -53,6 +54,12 @@ type orderService struct {
 	events EventProducer
 }
 
+var (
+	meter                 = otel.GetMeterProvider().Meter("order-service")
+	ordersTotal, _        = meter.Int64Counter("orders_total")
+	ordersRevenueTotal, _ = meter.Float64Counter("orders_revenue_total")
+)
+
 func NewOrderService(inv InventoryClient, pay PaymentClient, repo OrderRepository, events EventProducer) *orderService {
 	return &orderService{
 		inventory: inv,
@@ -90,12 +97,16 @@ func (s *orderService) CreateOrder(ctx context.Context, userID string, items []O
 		return Order{}, err
 	}
 
+	// Метрики: считаем количество заказов и суммарную выручку.
+	ordersTotal.Add(ctx, 1)
+	ordersRevenueTotal.Add(ctx, 100.0)
+
 	event := platformevents.OrderPaymentCompleted{
-		EventID: uuid.New().String(),
+		EventID:    uuid.New().String(),
 		OccurredAt: time.Now().UTC(),
-		OrderID: order.ID,
-		UserID: order.UserID,
-	  }
+		OrderID:    order.ID,
+		UserID:     order.UserID,
+	}
 
 	payload, err := json.Marshal(event)
 	if err != nil {

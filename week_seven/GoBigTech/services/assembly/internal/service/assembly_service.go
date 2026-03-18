@@ -7,6 +7,7 @@ import (
 
 	platformevents "github.com/bulbahal/GoBigTech/platform/events"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 // EventPublisher публикует события в Kafka.
@@ -23,11 +24,17 @@ type assemblyService struct {
 	publisher EventPublisher
 }
 
+var (
+	asmMeter            = otel.GetMeterProvider().Meter("assembly-service")
+	assemblyDuration, _ = asmMeter.Float64Histogram("assembly_duration_seconds")
+)
+
 func NewAssemblyService(publisher EventPublisher) AssemblyService {
 	return &assemblyService{publisher: publisher}
 }
 
 func (s *assemblyService) HandlePaymentCompleted(ctx context.Context, event platformevents.OrderPaymentCompleted) error {
+	start := time.Now()
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
 
@@ -49,5 +56,11 @@ func (s *assemblyService) HandlePaymentCompleted(ctx context.Context, event plat
 		return err
 	}
 
-	return s.publisher.Publish(ctx, platformevents.TopicOrderAssemblyCompleted, event.OrderID, payload)
+	if err := s.publisher.Publish(ctx, platformevents.TopicOrderAssemblyCompleted, event.OrderID, payload); err != nil {
+		return err
+	}
+	
+	assemblyDuration.Record(ctx, time.Since(start).Seconds())
+
+	return nil
 }
