@@ -54,8 +54,8 @@ func main() {
 	})
 
 	repo := c.Repository(ctx)
-	_ = repo.SetStock(ctx, "p1", 1000)
-	_ = repo.SetStock(ctx, "p2", 1000)
+	_ = repo.SetStock(ctx, "p1", 100)
+	_ = repo.SetStock(ctx, "p2", 100)
 
 	l := c.GRPCListener()
 	g := c.GRPCServer()

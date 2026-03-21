@@ -59,8 +59,6 @@ services:
       MONGO_URI: mongodb://mongo:27017
       MONGO_DB: appdb
       KAFKA_BROKERS: kafka:9092
-    ports:
-      - "50051:50051"
     depends_on:
       mongo:
         condition: service_healthy
@@ -76,8 +74,6 @@ services:
       ENV: local
       GRPC_ADDR: 0.0.0.0:50052
       KAFKA_BROKERS: kafka:9092
-    ports:
-      - "50052:50052"
     depends_on:
       kafka:
         condition: service_started
@@ -94,8 +90,6 @@ services:
       INVENTORY_GRPC_ADDR: inventory:50051
       PAYMENT_GRPC_ADDR: payment:50052
       KAFKA_BROKERS: kafka:9092
-    ports:
-      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -104,6 +98,18 @@ services:
       payment:
         condition: service_started
       kafka:
+        condition: service_started
+
+  envoy:
+    image: envoyproxy/envoy:v1.33.1
+    restart: unless-stopped
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "8081:8081"
+    depends_on:
+      order:
         condition: service_started
 
   assembly:
@@ -155,8 +161,6 @@ services:
       GRPC_ADDR: 0.0.0.0:50060
       POSTGRES_DSN: postgres://postgres:postgres@db:5432/iamdb?sslmode=disable
       REDIS_ADDR: redis:6379
-    ports:
-      - "50060:50060"
     depends_on:
       db:
         condition: service_healthy

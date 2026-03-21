@@ -1,0 +1,163 @@
+# Envoy gateway (Week 8 Step 2):
+# - HTTP listener на порту 8081
+# - Перед проксированием в Order Service выполняется Lua session check через IAM
+# - gRPC routing пока не добавляется
+
+static_resources:
+  listeners:
+    - name: listener_http
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8081
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                http2_protocol_options: {}
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: order
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: "/inventory.v1.InventoryService/"
+                          route:
+                            cluster: inventory_grpc
+                        - match:
+                            prefix: "/payment.v1.PaymentService/"
+                          route:
+                            cluster: payment_grpc
+                        - match:
+                            prefix: "/iam.v1.IAMService/"
+                          route:
+                            cluster: iam_grpc
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: order_http
+                http_filters:
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      inline_code: |
+                        function envoy_on_request(request_handle)
+                          local headers = request_handle:headers()
+                          local path = headers:get(":path") or ""
+
+                          if path == "/healthz" then
+                            request_handle:respond(
+                              { [":status"] = "200", ["content-type"] = "text/plain" },
+                              "ok"
+                            )
+                            return
+                          end
+
+                          -- Вход без сессии: только SignIn (логин), остальные IAM/сервисы — с x-session-id.
+                          if path == "/iam.v1.IAMService/SignIn" then
+                            return
+                          end
+
+                          local session_id = headers:get("x-session-id")
+                          if session_id == nil or session_id == "" then
+                            request_handle:respond(
+                              { [":status"] = "401", ["content-type"] = "text/plain" },
+                              "missing session id"
+                            )
+                            return
+                          end
+
+                          local resp_headers, _ = request_handle:httpCall(
+                            "iam_http",
+                            {
+                              [":method"] = "POST",
+                              [":path"] = "/internal/validate-session",
+                              [":authority"] = "iam",
+                              ["x-session-id"] = session_id
+                            },
+                            "",
+                            2000
+                          )
+
+                          local status = resp_headers[":status"]
+                          if status ~= "200" then
+                            request_handle:respond(
+                              { [":status"] = "401", ["content-type"] = "text/plain" },
+                              "invalid session"
+                            )
+                            return
+                          end
+                        end
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: order_http
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: order_http
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: order
+                      port_value: 8080
+
+    - name: inventory_grpc
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: inventory_grpc
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: inventory
+                      port_value: 50051
+
+    - name: payment_grpc
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: payment_grpc
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: payment
+                      port_value: 50052
+
+    - name: iam_grpc
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: iam_grpc
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: iam
+                      port_value: 50060
+
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901

@@ -16,6 +16,9 @@ type Config struct {
 
 	// RedisAddr — адрес Redis, где будут храниться сессии (обычно host:port, например redis:6379).
 	RedisAddr string
+
+	// HTTPAddr — адрес, на котором будет слушать минимальный HTTP-сервер для auth check.
+	HTTPAddr string
 }
 
 func getEnv(key, fallback string) string {
@@ -32,6 +35,7 @@ func Load() Config {
 		GRPCAddr:   getEnv("GRPC_ADDR", "0.0.0.0:50060"),
 		PostgresDSN: getEnv("POSTGRES_DSN", "postgres://postgres:postgres@db:5432/iamdb?sslmode=disable"),
 		RedisAddr:  getEnv("REDIS_ADDR", "redis:6379"),
+		HTTPAddr:   getEnv("HTTP_ADDR", "0.0.0.0:50061"),
 	}
 }
 
