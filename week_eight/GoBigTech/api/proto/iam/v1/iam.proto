@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package iam.v1;
+
+option go_package = "github.com/bulbahal/GoBigTech/services/iam/v1;iampb";
+
+// IAMService отвечает за аутентификацию, сессии и контакты пользователя.
+service IAMService {
+  // SignIn — логин по логину и паролю.
+  // Возвращает session_id и user_id, которые потом используют другие сервисы.
+  rpc SignIn (SignInRequest) returns (SignInResponse);
+
+  // ValidateSession — проверка валидности сессии по session_id.
+  // Используется интерцептором в Inventory Service.
+  rpc ValidateSession (ValidateSessionRequest) returns (ValidateSessionResponse);
+
+  // GetUserContact — получение контактной информации пользователя (например, Telegram ID).
+  // Используется Notification Service перед отправкой уведомления.
+  rpc GetUserContact (GetUserContactRequest) returns (GetUserContactResponse);
+}
+
+// Запрос на логин. Логин может быть username или email — детали решаются на уровне сервиса.
+message SignInRequest {
+  string login    = 1; // логин или email
+  string password = 2; // пароль в открытом виде (хэшируется на стороне сервиса)
+}
+
+// Ответ на успешный логин.
+message SignInResponse {
+  string session_id          = 1; // ID сессии в Redis
+  string user_id             = 2; // ID пользователя
+  int64  expires_at_unix_sec = 3; // unix-время истечения сессии (UTC), опционально для клиентов
+}
+
+// Запрос на проверку сессии (например, из gRPC-интерцептора Inventory).
+message ValidateSessionRequest {
+  string session_id = 1; // ID сессии, передаваемый клиентом (например, из metadata)
+}
+
+// Ответ проверки сессии.
+message ValidateSessionResponse {
+  bool   valid   = 1; // true, если сессия активна и валидна
+  string user_id = 2; // ID пользователя, связанный с сессией (для проброса в контекст)
+}
+
+// Запрос на получение контактных данных пользователя.
+message GetUserContactRequest {
+  string user_id = 1; // ID пользователя
+}
+
+// Ответ с контактной информацией.
+// На неделе 6 нам достаточно Telegram ID, остальные поля можно добавить позже.
+message GetUserContactResponse {
+  string user_id     = 1;
+  string telegram_id = 2; // Telegram ID пользователя, который будет использовать Notification Service
+}
