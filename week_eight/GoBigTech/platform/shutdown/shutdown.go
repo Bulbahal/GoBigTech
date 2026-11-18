@@ -3,96 +3,54 @@ package shutdown
 import (
 	"context"
 	"errors"
-	"reflect"
+	"os"
+	"os/signal"
 	"sync"
-	"testing"
+	"syscall"
 	"time"
 )
 
-func TestManager_ShutdownOrderAndErrors(t *testing.T) {
-	m := New()
-
-	var order []string
-	var mu sync.Mutex
-
-	errFirst := errors.New("first closer failed")
-	errThird := errors.New("third closer failed")
-
-	m.Add(func(ctx context.Context) error {
-		mu.Lock()
-		order = append(order, "first")
-		mu.Unlock()
-		return errFirst
-	})
-
-	m.Add(func(ctx context.Context) error {
-		mu.Lock()
-		order = append(order, "second")
-		mu.Unlock()
-		return nil
-	})
-
-	m.Add(func(ctx context.Context) error {
-		mu.Lock()
-		order = append(order, "third")
-		mu.Unlock()
-		return errThird
-	})
-
-	err := m.Shutdown(time.Second)
-	if !errors.Is(err, errFirst) || !errors.Is(err, errThird) {
-		t.Fatalf("expected joined errors, got: %v", err)
-	}
-
-	expectedOrder := []string{"third", "second", "first"}
-	if !reflect.DeepEqual(order, expectedOrder) {
-		t.Errorf("wrong shutdown order: got %v, want %v", order, expectedOrder)
-	}
+type Logger interface {
+	Info(msg string, fields ...any)
+	Error(msg string, fields ...any)
 }
 
-func TestManager_Timeout(t *testing.T) {
-	m := New()
-
-	m.Add(func(ctx context.Context) error {
-		<-ctx.Done()
-		return ctx.Err()
-	})
-
-	err := m.Shutdown(30 * time.Millisecond)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
-	}
+type Manager struct {
+	mu      sync.Mutex
+	closers []func(context.Context) error
 }
 
-func TestManager_ConcurrentAdd(t *testing.T) {
-	m := New()
+func New() *Manager {
+	return &Manager{}
+}
 
-	const workers = 20
-	var wg sync.WaitGroup
-	wg.Add(workers)
+func (m *Manager) Add(fn func(context.Context) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closers = append(m.closers, fn)
+}
 
-	var count int
-	var mu sync.Mutex
+func WaitSignal() os.Signal {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	return <-ch
+}
 
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-			m.Add(func(ctx context.Context) error {
-				mu.Lock()
-				count++
-				mu.Unlock()
-				return nil
-			})
-		}()
+func (m *Manager) Shutdown(timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	m.mu.Lock()
+	closers := make([]func(context.Context) error, len(m.closers))
+	copy(closers, m.closers)
+	m.mu.Unlock()
+
+	var errs []error
+	for i := len(closers) - 1; i >= 0; i-- {
+		if err := closers[i](ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	wg.Wait()
-
-	if err := m.Shutdown(time.Second); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if count != workers {
-		t.Errorf("expected %d closers executed, got %d", workers, count)
-	}
+	return errors.Join(errs...)
 }
