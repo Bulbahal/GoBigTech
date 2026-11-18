@@ -2,24 +2,23 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+
+	platformevents "github.com/bulbahal/GoBigTech/platform/events"
 )
 
 type mockRepo struct {
-	saveErr  error
-	getErr   error
-	getOrder Order
+	saveErr   error
+	getErr    error
+	updateErr error
+	getOrder  Order
 
-	saveCalled bool
-	savedOrder Order
-}
-type mockInventoryClient struct {
-	reserveErr error
-
-	called       bool
-	calledProdID string
-	calledQty    int32
+	saveCalled   bool
+	savedOrder   Order
+	updatedID    string
+	updatedState string
 }
 
 func (m *mockRepo) SaveOrder(ctx context.Context, order Order) error {
@@ -36,7 +35,17 @@ func (m *mockRepo) GetOrderByID(ctx context.Context, id string) (Order, error) {
 }
 
 func (m *mockRepo) UpdateOrderStatus(ctx context.Context, orderID, status string) error {
-	return nil
+	m.updatedID = orderID
+	m.updatedState = status
+	return m.updateErr
+}
+
+type mockInventoryClient struct {
+	reserveErr error
+
+	called       bool
+	calledProdID string
+	calledQty    int32
 }
 
 func (m *mockInventoryClient) ReserveStock(ctx context.Context, productID string, qty int32) error {
@@ -65,97 +74,162 @@ func (m *mockPaymentClient) ProcessPayment(ctx context.Context, orderID, userID 
 	return m.payErr
 }
 
-func TestCreateOrder_Success(t *testing.T) {
-	ctx := context.Background()
+type mockEventProducer struct {
+	publishErr error
 
-	invMock := &mockInventoryClient{}
-	payMock := &mockPaymentClient{}
+	called      bool
+	calledTopic string
+	calledKey   string
+	calledValue []byte
+}
+
+func (m *mockEventProducer) Publish(ctx context.Context, topic, key string, value []byte) error {
+	m.called = true
+	m.calledTopic = topic
+	m.calledKey = key
+	m.calledValue = value
+	return m.publishErr
+}
+
+func TestOrderService_CreateOrder(t *testing.T) {
+	tests := []struct {
+		name           string
+		userID         string
+		items          []OrderItem
+		invErr         error
+		payErr         error
+		saveErr        error
+		publishErr     error
+		wantErr        bool
+		wantInvCalled  bool
+		wantPayCalled  bool
+		wantSaveCalled bool
+		wantPubCalled  bool
+	}{
+		{
+			name:           "success",
+			userID:         "u1",
+			items:          []OrderItem{{ProductID: "p1", Quantity: 2}},
+			wantErr:        false,
+			wantInvCalled:  true,
+			wantPayCalled:  true,
+			wantSaveCalled: true,
+			wantPubCalled:  true,
+		},
+		{
+			name:    "empty userID",
+			userID:  "",
+			items:   []OrderItem{{ProductID: "p1", Quantity: 1}},
+			wantErr: true,
+		},
+		{
+			name:    "empty items",
+			userID:  "u1",
+			items:   nil,
+			wantErr: true,
+		},
+		{
+			name:          "inventory error",
+			userID:        "u1",
+			items:         []OrderItem{{ProductID: "p1", Quantity: 1}},
+			invErr:        errors.New("no stock"),
+			wantErr:       true,
+			wantInvCalled: true,
+		},
+		{
+			name:          "payment error",
+			userID:        "u1",
+			items:         []OrderItem{{ProductID: "p1", Quantity: 1}},
+			payErr:        errors.New("payment declined"),
+			wantErr:       true,
+			wantInvCalled: true,
+			wantPayCalled: true,
+		},
+		{
+			name:           "repository save error",
+			userID:         "u1",
+			items:          []OrderItem{{ProductID: "p1", Quantity: 1}},
+			saveErr:        errors.New("db unavailable"),
+			wantErr:        true,
+			wantInvCalled:  true,
+			wantPayCalled:  true,
+			wantSaveCalled: true,
+		},
+		{
+			name:           "event publish error",
+			userID:         "u1",
+			items:          []OrderItem{{ProductID: "p1", Quantity: 1}},
+			publishErr:     errors.New("kafka broker down"),
+			wantErr:        true,
+			wantInvCalled:  true,
+			wantPayCalled:  true,
+			wantSaveCalled: true,
+			wantPubCalled:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			invMock := &mockInventoryClient{reserveErr: tt.invErr}
+			payMock := &mockPaymentClient{payErr: tt.payErr}
+			repoMock := &mockRepo{saveErr: tt.saveErr}
+			pubMock := &mockEventProducer{publishErr: tt.publishErr}
+
+			svc := NewOrderService(invMock, payMock, repoMock, pubMock)
+
+			order, err := svc.CreateOrder(context.Background(), tt.userID, tt.items)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("CreateOrder() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if invMock.called != tt.wantInvCalled {
+				t.Errorf("inventory called = %v, want %v", invMock.called, tt.wantInvCalled)
+			}
+			if payMock.called != tt.wantPayCalled {
+				t.Errorf("payment called = %v, want %v", payMock.called, tt.wantPayCalled)
+			}
+			if repoMock.saveCalled != tt.wantSaveCalled {
+				t.Errorf("repo.SaveOrder called = %v, want %v", repoMock.saveCalled, tt.wantSaveCalled)
+			}
+			if pubMock.called != tt.wantPubCalled {
+				t.Errorf("events.Publish called = %v, want %v", pubMock.called, tt.wantPubCalled)
+			}
+
+			if !tt.wantErr {
+				if order.ID == "" {
+					t.Errorf("expected generated non-empty order ID")
+				}
+				if order.UserID != tt.userID || order.Status != "paid" {
+					t.Errorf("unexpected order state: %+v", order)
+				}
+				if pubMock.calledTopic != platformevents.TopicOrderPaymentCompleted {
+					t.Errorf("unexpected topic: got %s, want %s", pubMock.calledTopic, platformevents.TopicOrderPaymentCompleted)
+				}
+
+				var published platformevents.OrderPaymentCompleted
+				if err := json.Unmarshal(pubMock.calledValue, &published); err != nil {
+					t.Fatalf("failed to unmarshal published event: %v", err)
+				}
+				if published.OrderID != order.ID || published.UserID != tt.userID {
+					t.Errorf("published event mismatch: %+v", published)
+				}
+			}
+		})
+	}
+}
+
+func TestOrderService_HandleAssemblyCompleted(t *testing.T) {
 	repoMock := &mockRepo{}
+	svc := NewOrderService(&mockInventoryClient{}, &mockPaymentClient{}, repoMock, &mockEventProducer{})
 
-	svc := NewOrderService(invMock, payMock, repoMock)
-
-	items := []OrderItem{{ProductID: "p1", Quantity: 2}}
-
-	order, err := svc.CreateOrder(ctx, "u1", items)
+	err := svc.HandleAssemblyCompleted(context.Background(), platformevents.OrderAssemblyCompleted{
+		OrderID: "order-123",
+	})
 	if err != nil {
-		t.Fatalf("CreateOrder failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !invMock.called {
-		t.Errorf("expected inventory.ReserveStock to be called")
-	}
-	if invMock.calledProdID != "p1" || invMock.calledQty != 2 {
-		t.Errorf("inventory called with wrong args: product=%v qty=%v",
-			invMock.calledProdID, invMock.calledQty)
-	}
-
-	if !payMock.called {
-		t.Errorf("expected payment to be called")
-	}
-
-	if !repoMock.saveCalled {
-		t.Errorf("expected repo.SaveOrder to be called")
-	}
-	if repoMock.savedOrder.ID != "" {
-		t.Errorf("saved order ID is wrong: %v", repoMock.savedOrder.ID)
-	}
-
-	if order.ID != "" {
-		t.Errorf("order ID is wrong: %v", order.ID)
-	}
-	if order.UserID != "u1" {
-		t.Errorf("order UserID is wrong: %v", order.UserID)
-	}
-	if order.Status != "paid" {
-		t.Errorf("order Status is wrong: %v", order.Status)
-	}
-}
-func TestCreateOrder_InventoryError(t *testing.T) {
-	ctx := context.Background()
-
-	invMock := &mockInventoryClient{reserveErr: errors.New("no stock")}
-	payMock := &mockPaymentClient{}
-	repoMock := &mockRepo{}
-
-	svc := NewOrderService(invMock, payMock, repoMock)
-
-	_, err := svc.CreateOrder(ctx, "u1", []OrderItem{{ProductID: "p1", Quantity: 1}})
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-
-	if !invMock.called {
-		t.Errorf("expected inventory.ReserveStock to be called")
-	}
-	if payMock.called {
-		t.Errorf("expected payment NOT to be called")
-	}
-	if repoMock.saveCalled {
-		t.Errorf("expected repo.SaveOrder NOT to be called")
-	}
-}
-
-func TestCreateOrder_PaymentError(t *testing.T) {
-	ctx := context.Background()
-
-	invMock := &mockInventoryClient{}
-	payMock := &mockPaymentClient{payErr: errors.New("payment failed")}
-	repoMock := &mockRepo{}
-
-	svc := NewOrderService(invMock, payMock, repoMock)
-
-	_, err := svc.CreateOrder(ctx, "u1", []OrderItem{{ProductID: "p1", Quantity: 1}})
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-
-	if !invMock.called {
-		t.Errorf("expected inventory.ReserveStock to be called")
-	}
-	if !payMock.called {
-		t.Errorf("expected payment to be called")
-	}
-	if repoMock.saveCalled {
-		t.Errorf("expected repo.SaveOrder NOT to be called")
+	if repoMock.updatedID != "order-123" || repoMock.updatedState != "assembled" {
+		t.Errorf("unexpected status update: id=%s, status=%s", repoMock.updatedID, repoMock.updatedState)
 	}
 }
